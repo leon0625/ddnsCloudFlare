@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import logging,sys
+import logging,sys,os
 import configparser
 import requests
 import subprocess
@@ -62,7 +62,10 @@ def createRecord(zoneId, recordName, apiKey, type, value):
     return jrst['result']['id']
 
 def updateIp(ntype):
-    zoneId,recordName,apiKey = read_config('config.ini')
+    cfg_path = os.path.join(os.path.dirname(__file__), 'config.ini')
+    logging.debug(f'config file path: {cfg_path}')
+    zoneId,recordName,apiKey = read_config(cfg_path)
+    
     if ntype == 'AAAA':
         extIpAddr = getIpv6Address()
     else:
