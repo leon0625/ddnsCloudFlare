@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
-import logging,sys,os
+import logging, sys, os, time
 import configparser
 import requests
 import subprocess
+
+RETRY_COUNT = 6
+RETRY_DELAY = 60  # seconds
 
 
 def read_config(path):
@@ -15,67 +18,97 @@ def read_config(path):
         apiKey = cfg.get('global', 'apiKey')
         return zoneId, recordName, apiKey
     except Exception as e:
-        print(f'Error: {e}')
+        logging.error(f'Error reading config: {e}')
         exit(1)
 
 
+def request_with_retry(method, url, **kwargs):
+    for attempt in range(RETRY_COUNT):
+        try:
+            response = requests.request(method, url, timeout=20, **kwargs)
+            response.raise_for_status()
+            return response
+        except Exception as e:
+            logging.warning(f'[{attempt+1}/{RETRY_COUNT}] {method} request failed: {e}')
+            if attempt < RETRY_COUNT - 1:
+                time.sleep(RETRY_DELAY)
+            else:
+                logging.error('Max retry limit reached. Giving up.')
+                exit(1)
+
+
 def getIpv4Address():
-    response = requests.get('https://api.ipify.org')
-    return response.text
+    response = request_with_retry('GET', 'https://api.ipify.org')
+    return response.text.strip()
+
 
 def getIpv6Address():
-    proc = subprocess.run(['curl', '-s', '-6', 'https://ifconfig.co/ip'], stdout=subprocess.PIPE, text=True)
-    return proc.stdout.strip()
+    #command = "ip a show dev br0 mngtmpaddr | awk '/240e/ {print $2}' | sed 's@/.*@@' | head -n 1"
+    command = "ip a | awk '/240/ {print $2}' | sed 's@/.*@@' | head -n 1"
+    for attempt in range(RETRY_COUNT):
+        try:
+            proc = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+            output = proc.stdout.strip()
+            if output:
+                return output
+            raise RuntimeError("Empty IPv6 address")
+        except Exception as e:
+            logging.warning(f'[{attempt+1}/{RETRY_COUNT}] Failed to get IPv6 address: {e}')
+            if attempt < RETRY_COUNT - 1:
+                time.sleep(RETRY_DELAY)
+            else:
+                logging.error('Max retry limit reached. Giving up.')
+                exit(1)
+
 
 def listRecord(zoneId, recordName, apiKey, type='A'):
-    result = requests.get(f'https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records?name={recordName}', 
-                          headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {apiKey}'})
-    jrst = result.json()
+    url = f'https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records?name={recordName}'
+    headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {apiKey}'}
+    response = request_with_retry('GET', url, headers=headers)
+    jrst = response.json()
     logging.debug(jrst)
-    if jrst['success'] == False:
-        logging.error("success status isn't True")
-        exit()
-
+    if not jrst['success']:
+        logging.error("Cloudflare response: success == False")
+        exit(1)
     for record in jrst['result']:
         if record['type'] == type:
             return record['id'], record['content']
-    
     logging.info('No record found')
-    return None,None
+    return None, None
 
 
 def updateRecord(zoneId, recordName, apiKey, resourceId, type, value):
-    result = requests.put(f'https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records/{resourceId}', 
-                          headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {apiKey}'},
-                          json={'type': type, 'name': recordName, 'content': value, 'ttl': 600, 'proxied': False})
-    jrst = result.json()
+    url = f'https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records/{resourceId}'
+    headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {apiKey}'}
+    payload = {'type': type, 'name': recordName, 'content': value, 'ttl': 600, 'proxied': False}
+    response = request_with_retry('PUT', url, headers=headers, json=payload)
+    jrst = response.json()
     logging.debug(jrst)
     return jrst['success']
 
 
 def createRecord(zoneId, recordName, apiKey, type, value):
-    result = requests.post(f'https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records', 
-                           headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {apiKey}'},
-                           json={'type': type, 'name': recordName, 'content': value, 'ttl': 600, 'proxied': False})
-    jrst = result.json()
+    url = f'https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records'
+    headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {apiKey}'}
+    payload = {'type': type, 'name': recordName, 'content': value, 'ttl': 600, 'proxied': False}
+    response = request_with_retry('POST', url, headers=headers, json=payload)
+    jrst = response.json()
     logging.debug(jrst)
     return jrst['result']['id']
+
 
 def updateIp(ntype):
     cfg_path = os.path.join(os.path.dirname(__file__), 'config.ini')
     logging.debug(f'config file path: {cfg_path}')
-    zoneId,recordName,apiKey = read_config(cfg_path)
-    
-    if ntype == 'AAAA':
-        extIpAddr = getIpv6Address()
-    else:
-        extIpAddr = getIpv4Address()
+    zoneId, recordName, apiKey = read_config(cfg_path)
+
+    extIpAddr = getIpv6Address() if ntype == 'AAAA' else getIpv4Address()
 
     if len(extIpAddr) == 0:
         logging.error('Error: Unable to get external IP address')
         exit(1)
 
-    id,currentIp = listRecord(zoneId, recordName, apiKey, ntype)
+    id, currentIp = listRecord(zoneId, recordName, apiKey, ntype)
 
     if currentIp == extIpAddr:
         logging.info('No change')
@@ -85,14 +118,16 @@ def updateIp(ntype):
         createRecord(zoneId, recordName, apiKey, ntype, extIpAddr)
     else:
         updateRecord(zoneId, recordName, apiKey, id, ntype, extIpAddr)
+
     logging.info(f'IP address update success: {currentIp} ==> {extIpAddr}')
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level = logging.INFO)
+    logging.basicConfig(level=logging.INFO)
 
     if len(sys.argv) == 1:
         logging.error(f'No argument provided\nipv6: {sys.argv[0]} AAAA\nipv4: {sys.argv[0]} A')
         exit(1)
 
     updateIp(sys.argv[1])
+
