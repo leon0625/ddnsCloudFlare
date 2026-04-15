@@ -43,8 +43,8 @@ def getIpv4Address():
 
 
 def getIpv6Address():
-    #command = "ip a show dev br0 mngtmpaddr | awk '/240e/ {print $2}' | sed 's@/.*@@' | head -n 1"
-    command = "ip a | awk '/240/ {print $2}' | sed 's@/.*@@' | head -n 1"
+    command = "ip a show mngtmpaddr | awk '/240/ {print $2}' | sed 's@/.*@@' | head -n 1"
+    #command = "ip a | awk '/240/ {print $2}' | sed 's@/.*@@' | head -n 1"
     for attempt in range(RETRY_COUNT):
         try:
             proc = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
