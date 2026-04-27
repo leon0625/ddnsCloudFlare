@@ -8,7 +8,7 @@ A shell script to automatic update cloudFlare dns record whit actual external ip
 - Have a domain and use Cloudflare's nameserver.  
 - Find your `ZoneId` from the [overview] page of you domain.  
 - Create an `api token`. You can find it from [Here](https://dash.cloudflare.com/profile/api-tokens)
-- Clone this project to local, fill in `config.conf`. In which, `zoneId` and `apiKey` refer to the contents you just got in the above steps. `recordName`is the dns record name you'd like to operate.
+- Clone this project to local, fill in `config.ini`. In which, `zoneId` and `apiKey` refer to the contents you just got in the above steps. `recordName` is the default dns record name you'd like to operate.
 
 ## Update Ipv4 record
 Simply run:
@@ -25,6 +25,16 @@ Similar to the previous, but just run:
 ./updateIp.py AAAA
 ```
 The behavior is also the same.
+
+## Override record name from command line
+If you want one script to report different dns records, you can override `recordName` for a single run:
+
+```shell
+./updateIp.py A --record-name home.example.com
+./updateIp.py AAAA -r ipv6.example.com
+```
+
+If `--record-name` is not provided, the script still uses `recordName` from `config.ini`, so existing usage remains compatible.
 
 # Note
 - You can make it periodically executed using [crontab](https://linuxconfig.org/linux-crontab-reference-guide).  

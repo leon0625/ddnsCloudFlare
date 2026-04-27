@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import logging, sys, os, time
 import configparser
 import requests
@@ -97,10 +98,25 @@ def createRecord(zoneId, recordName, apiKey, type, value):
     return jrst['result']['id']
 
 
-def updateIp(ntype):
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Update Cloudflare DNS record with the current external IP address.'
+    )
+    parser.add_argument('type', choices=['A', 'AAAA'], help='DNS record type to update')
+    parser.add_argument(
+        '-r',
+        '--record-name',
+        dest='record_name',
+        help='Override recordName from config.ini for this run',
+    )
+    return parser.parse_args()
+
+
+def updateIp(ntype, record_name=None):
     cfg_path = os.path.join(os.path.dirname(__file__), 'config.ini')
     logging.debug(f'config file path: {cfg_path}')
     zoneId, recordName, apiKey = read_config(cfg_path)
+    recordName = record_name or recordName
 
     extIpAddr = getIpv6Address() if ntype == 'AAAA' else getIpv4Address()
 
@@ -124,10 +140,5 @@ def updateIp(ntype):
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-
-    if len(sys.argv) == 1:
-        logging.error(f'No argument provided\nipv6: {sys.argv[0]} AAAA\nipv4: {sys.argv[0]} A')
-        exit(1)
-
-    updateIp(sys.argv[1])
-
+    args = parse_args()
+    updateIp(args.type, args.record_name)
